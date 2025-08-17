@@ -11,7 +11,6 @@ client = Minio(
 )
 
 # Configuration
-API_KEY = "ec550498bf4399da18bc6cae4765dafe"
 CITY = "Manila"
 
 
