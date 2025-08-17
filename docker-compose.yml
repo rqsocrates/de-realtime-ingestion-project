@@ -1,0 +1,164 @@
+version: '3.8'
+
+services:
+
+  # 1. Kafka (KRaft mode - no Zookeeper required)
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0 # Ensure this version supports KRaft
+    hostname: kafka
+    container_name: kafka_broker
+    ports:
+      - "9092:9092" # External communication to host
+      - "9093:9093" # Internal controller listener for KRaft
+    environment:
+      # Kafka Broker Configuration for KRaft mode (essential for initialization)
+      KAFKA_BROKER_ID: 1 # Must be unique for each broker/controller
+      KAFKA_PROCESS_ROLES: 'broker,controller' # This Kafka instance is both a broker and controller
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
+      # --- IMPORTANT CHANGE HERE ---
+      # Only advertise the PLAINTEXT listener for clients
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9092' # Removed CONTROLLER listener
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER' # This defines what the controller listener is called
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data' # Explicitly define log directory
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1 # Needed for Confluent images
+      KAFKA_CONFLUENT_BALANCER_ENABLE: 'false' # Often defaults to true in Confluent images, disable for single node
+      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID} # From your .env file
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093' # Node ID @ service name : controller port
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+    volumes:
+      - kafka_data:/var/lib/kafka/data # Persist Kafka data
+      # NO NEED to mount custom server.properties or run `kafka-storage format` manually
+#
+
+
+  # 2. MinIO (S3-compatible object storage)
+  minio:
+    image: minio/minio:latest
+    hostname: minio
+    container_name: minio_server
+    ports:
+      - "9000:9000" # MinIO API
+      - "9001:9001" # MinIO Console UI
+    environment:
+      MINIO_ROOT_USER: minioadmin # Change for production!
+      MINIO_ROOT_PASSWORD: minioadmin # Change for production!
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data # Persist MinIO data
+
+
+  # 3. TimescaleDB (PostgreSQL with TimescaleDB extension)
+  timescaledb:
+    image: timescale/timescaledb-ha:pg16 # Using Postgres 16 with latest TimescaleDB
+    hostname: timescaledb
+    container_name: timescaledb_db
+    ports:
+      - "5432:5432" # PostgreSQL port
+    environment:
+      POSTGRES_DB: iot_analytics
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin # <--- Ensure this is present and has a non-empty value
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data # Persist DB data\
+      # Optional: Add an init script to create the TimescaleDB extension automatically
+      # - ./db_init_scripts:/docker-entrypoint-initdb.d
+
+
+  # 4. Spark Master
+#  spark-master:
+#    image: apache/spark:latest # Or apache/spark:v3.5.0
+#    hostname: spark-master
+#    container_name: spark_master
+#    ports:
+#      - "7077:7077" # Spark Master port (for client connections)
+#      - "8080:8080" # Spark Master Web UI
+#    environment:
+#      SPARK_MODE: master
+#      SPARK_RPC_AUTHENTICATION_ENABLED: "no" # Disable for local dev, enable for production
+#      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+#      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+#      SPARK_SSL_ENABLED: "no"
+
+
+  # 5. Spark Worker
+#  spark-worker-1:
+#    image: apache/spark:latest # Or apache/spark:v3.5.0
+#    hostname: spark-worker-1
+#    container_name: spark_worker_1
+#    depends_on:
+#      - spark-master
+#    ports:
+#      - "8081:8081" # Spark Worker Web UI (adjust for more workers)
+#    environment:
+#      SPARK_MODE: worker
+#      SPARK_MASTER_URL: spark://spark-master:7077
+#      SPARK_WORKER_CORES: 1 # Adjust based on your host CPU
+#      SPARK_WORKER_MEMORY: 1g # Adjust based on your host RAM
+#      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+#      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+#      SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED: "no"
+#      SPARK_SSL_ENABLED: "no"
+
+
+  # 6. PySpark Application Runner
+  # This container will run your PySpark streaming script and submit it to the Spark cluster.
+#  pyspark-app:
+#    image: apache/spark-py:latest # Contains Spark, Python, and PySpark bindings
+#    hostname: pyspark-app
+#    container_name: pyspark_streaming_app
+#    depends_on:
+#      - spark-master # Ensure Spark Master is up
+#      - kafka        # Ensure Kafka is up
+#      - minio        # Ensure MinIO is up
+#      - timescaledb  # Ensure TimescaleDB is up
+#    environment:
+#      SPARK_MASTER_URL: spark://spark-master:7077
+#      # Pass connection details to your Python script if needed, or read from config
+#      KAFKA_BOOTSTRAP_SERVERS: kafka:9092 # Internal Docker network address
+#      MINIO_ENDPOINT: http://minio:9000
+#      MINIO_ACCESS_KEY: minioadmin
+#      MINIO_SECRET_KEY: minioadmin
+#      POSTGRES_HOST: timescaledb
+#      POSTGRES_DB: iot_analytics
+#      POSTGRES_USER: iot_user
+#      POSTGRES_PASSWORD: iot_password
+#    volumes:
+#      - ./spark_app:/app # Mount your PySpark script directory into the container
+#    command: >
+#      /opt/spark/bin/spark-submit
+#      --master spark://spark-master:7077
+#      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262,io.minio:minio:8.5.5,org.postgresql:postgresql:42.7.3
+#      --conf "spark.hadoop.fs.s3a.endpoint=${MINIO_ENDPOINT}"
+#      --conf "spark.hadoop.fs.s3a.access.key=${MINIO_ACCESS_KEY}"
+#      --conf "spark.hadoop.fs.s3a.secret.key=${MINIO_SECRET_KEY}"
+#      --conf "spark.hadoop.fs.s3a.path.style.access=true"
+#      --conf "spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem"
+#      --conf "spark.hadoop.fs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider"
+#      /app/iot_streaming_processor.py # Your PySpark streaming script
+#    restart: on-failure # Automatically restart if the PySpark app crashes
+
+
+  # 7. (Optional) Python Data Simulator (if you choose to containerize it)
+  # python-data-simulator:
+  #   build: ./python_simulator # Assumes a Dockerfile in python_simulator directory
+  #   hostname: python-data-simulator
+  #   container_name: iot_data_simulator
+  #   depends_on:
+  #     - kafka
+  #   environment:
+  #     KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+  #   networks:
+  #     - iot_network
+  #   restart: on-failure
+
+
+volumes:
+  kafka_data:
+  minio_data:
+  timescaledb_data:
