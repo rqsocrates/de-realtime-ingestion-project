@@ -4,71 +4,75 @@ services:
 
   # 1. Kafka (KRaft mode - no Zookeeper required)
   kafka:
-    image: confluentinc/cp-kafka:7.5.0 # Ensure this version supports KRaft
+    image: confluentinc/cp-kafka:7.5.0
     hostname: kafka
     container_name: kafka_broker
     ports:
-      - "9092:9092" # External communication to host
-      - "9093:9093" # Internal controller listener for KRaft
+      - "9092:9092"
+      - "9093:9093"
     environment:
-      # Kafka Broker Configuration for KRaft mode (essential for initialization)
-      KAFKA_BROKER_ID: 1 # Must be unique for each broker/controller
-      KAFKA_PROCESS_ROLES: 'broker,controller' # This Kafka instance is both a broker and controller
+      KAFKA_BROKER_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093'
-      # --- IMPORTANT CHANGE HERE ---
-      # Only advertise the PLAINTEXT listener for clients
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://localhost:9092' # Removed CONTROLLER listener
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092'
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT'
-      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER' # This defines what the controller listener is called
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_LOG_DIRS: '/var/lib/kafka/data' # Explicitly define log directory
-      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1 # Needed for Confluent images
-      KAFKA_CONFLUENT_BALANCER_ENABLE: 'false' # Often defaults to true in Confluent images, disable for single node
-      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID} # From your .env file
-      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093' # Node ID @ service name : controller port
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_ENABLE: 'false'
+      KAFKA_CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
       CLUSTER_ID: ${KAFKA_CLUSTER_ID}
     volumes:
-      - kafka_data:/var/lib/kafka/data # Persist Kafka data
-      # NO NEED to mount custom server.properties or run `kafka-storage format` manually
-#
+      - kafka_data:/var/lib/kafka/data
 
+  # 2. Schema Registry for Schema Enforcement
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    hostname: schema-registry
+    container_name: schema_registry
+    depends_on:
+      - kafka
+    ports:
+      - "8081:8081"   # Schema Registry API
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: "PLAINTEXT://kafka:9092"
+      SCHEMA_REGISTRY_LISTENERS: "http://0.0.0.0:8081"
 
-  # 2. MinIO (S3-compatible object storage)
+  # 3. MinIO (S3-compatible object storage)
   minio:
     image: minio/minio:latest
     hostname: minio
     container_name: minio_server
     ports:
-      - "9000:9000" # MinIO API
-      - "9001:9001" # MinIO Console UI
+      - "9000:9000"
+      - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin # Change for production!
-      MINIO_ROOT_PASSWORD: minioadmin # Change for production!
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     command: server /data --console-address ":9001"
     volumes:
-      - minio_data:/data # Persist MinIO data
+      - minio_data:/data
 
-
-  # 3. TimescaleDB (PostgreSQL with TimescaleDB extension)
+  # 4. TimescaleDB
   timescaledb:
-    image: timescale/timescaledb-ha:pg16 # Using Postgres 16 with latest TimescaleDB
+    image: timescale/timescaledb-ha:pg16
     hostname: timescaledb
     container_name: timescaledb_db
     ports:
-      - "5432:5432" # PostgreSQL port
+      - "5432:5432"
     environment:
       POSTGRES_DB: iot_analytics
       POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin # <--- Ensure this is present and has a non-empty value
+      POSTGRES_PASSWORD: admin
     volumes:
-      - timescaledb_data:/var/lib/postgresql/data # Persist DB data\
-      # Optional: Add an init script to create the TimescaleDB extension automatically
-      # - ./db_init_scripts:/docker-entrypoint-initdb.d
-
+      - timescaledb_data:/var/lib/postgresql/data
 
   # 4. Spark Master
 #  spark-master:
