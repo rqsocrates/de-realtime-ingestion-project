@@ -1,7 +1,11 @@
 import requests
 import json
+
+from dotenv import load_dotenv
 from minio import Minio
 from io import BytesIO
+import os
+load_dotenv()
 
 client = Minio(
     "localhost:9000",
@@ -10,7 +14,12 @@ client = Minio(
     secure=False
 )
 
-# Configuration
+API_KEY = os.getenv('API_KEY_NAME')
+if API_KEY:
+    print(f"Found the api key!")
+else:
+    print(f"No available API KEY for this script")
+
 CITY = "Manila"
 
 
